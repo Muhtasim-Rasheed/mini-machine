@@ -1,17 +1,9 @@
-use std::{collections::HashMap, ops::*, sync::LazyLock};
+use std::{collections::HashMap, io::Write, sync::LazyLock};
 
-/// Representation of [`Undigyte`], but separated into undigits
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Undigits {
-    lo: u8,
-    hi: u8,
-}
+use mini_machine::machine::Machine;
+use mini_machine::radbyte::RadixByte;
 
-impl Undigits {
-    const fn as_undigyte(self) -> Undigyte {
-        Undigyte(self.hi * 11 + self.lo)
-    }
-}
+type Undigyte = RadixByte<11, 2>;
 
 #[rustfmt::skip]
 const UNDIGYTE_TABLE: [[char; 11]; 11] = [
@@ -28,126 +20,38 @@ const UNDIGYTE_TABLE: [[char; 11]; 11] = [
     ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '±'],
 ];
 
-static CHAR_TO_UNDIGYTE: LazyLock<HashMap<char, (u8, u8)>> = LazyLock::new(|| {
+static CHAR_TO_UNDIGYTE: LazyLock<HashMap<char, [u8; 2]>> = LazyLock::new(|| {
     let mut map = HashMap::new();
-    for (row, cols) in UNDIGYTE_TABLE.iter().enumerate() {
-        for (col, &ch) in cols.iter().enumerate() {
-            map.insert(ch, (row as u8, col as u8));
+    for (hi, cols) in UNDIGYTE_TABLE.iter().enumerate() {
+        for (lo, &ch) in cols.iter().enumerate() {
+            map.insert(ch, [hi as u8, lo as u8]);
         }
     }
     map
 });
 
-/// A value in [0, 121)
-#[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct Undigyte(u8);
-
-impl Undigyte {
-    const MIN: Self = Undigyte(0);
-    const MAX: Self = Undigyte(120);
-    const MODULUS: u8 = 121;
-
-    const fn as_undigits(self) -> Undigits {
-        let lo = self.0 % 11;
-        let hi = self.0 / 11;
-        Undigits { lo, hi }
-    }
-
-    const fn as_char(self) -> char {
-        let ud = self.as_undigits();
-        UNDIGYTE_TABLE[ud.hi as usize][ud.lo as usize]
-    }
-
-    fn from_char(c: char) -> Option<Self> {
-        CHAR_TO_UNDIGYTE
-            .get(&c)
-            .map(|tup| Undigyte(tup.0 * 11 + tup.1))
-    }
-
-    const fn wrapping_add(self, rhs: Self) -> Self {
-        Undigyte((self.0 + rhs.0) % Self::MODULUS)
-    }
-
-    const fn wrapping_sub(self, rhs: Self) -> Self {
-        // + MODULUS avoids underflow before the mod
-        Undigyte((self.0 + Self::MODULUS - rhs.0) % Self::MODULUS)
-    }
-
-    const fn wrapping_mul(self, rhs: Self) -> Self {
-        // u8 * u8 fits in u16, so no overflow before the mod
-        Undigyte(((self.0 as u16 * rhs.0 as u16) % Self::MODULUS as u16) as u8)
-    }
-
-    const fn checked_div(self, rhs: Self) -> Option<Self> {
-        if rhs.0 == 0 {
-            return None;
-        }
-        Some(Undigyte((self.0 / rhs.0) % Self::MODULUS))
-    }
-
-    const fn checked_mod(self, rhs: Self) -> Option<Self> {
-        if rhs.0 == 0 {
-            return None;
-        }
-        Some(Undigyte(self.0 % rhs.0))
-    }
-
-    const fn wrapping_neg(self) -> Self {
-        Undigyte((Self::MODULUS - self.0) % Self::MODULUS)
-    }
-
-    const fn as_signed(self) -> i8 {
-        if self.0 <= 60 {
-            self.0 as i8
-        } else {
-            self.0 as i8 - Self::MODULUS as i8
-        }
-    }
+fn undigyte2char(u: Undigyte) -> char {
+    let [hi, lo] = u.digits();
+    UNDIGYTE_TABLE[hi as usize][lo as usize]
 }
 
-impl Add for Undigyte {
-    type Output = Self;
-    fn add(self, rhs: Self) -> Self {
-        self.wrapping_add(rhs)
-    }
+fn char2undigyte(c: char) -> Option<Undigyte> {
+    CHAR_TO_UNDIGYTE.get(&c).map(|&d| Undigyte::from_digits(d))
 }
 
-impl Sub for Undigyte {
-    type Output = Self;
-    fn sub(self, rhs: Self) -> Self {
-        self.wrapping_sub(rhs)
-    }
-}
+struct DebugUndigyte(Undigyte);
 
-impl Mul for Undigyte {
-    type Output = Self;
-    fn mul(self, rhs: Self) -> Self {
-        self.wrapping_mul(rhs)
-    }
-}
-
-impl Neg for Undigyte {
-    type Output = Self;
-    fn neg(self) -> Self {
-        self.wrapping_neg()
-    }
-}
-
-impl std::fmt::Debug for Undigyte {
+impl std::fmt::Debug for DebugUndigyte {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let ud = self.as_undigits();
-        match (ud.hi, ud.lo) {
-            (10, 10) => write!(f, "0uXX"),
-            (10, l) => write!(f, "0uX{l}"),
-            (h, 10) => write!(f, "0u{h}X"),
-            (h, l) => write!(f, "0u{h}{l}"),
-        }
+        let [hi, lo] = self.0.digits();
+        let digit = |d: u8| if d == 10 { 'X' } else { (b'0' + d) as char };
+        write!(f, "0u{}{}", digit(hi), digit(lo))
     }
 }
 
-impl std::fmt::Display for Undigyte {
+impl std::fmt::Display for DebugUndigyte {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.0.get())
     }
 }
 
@@ -162,39 +66,35 @@ impl std::fmt::Display for ParseUndigyteError {
 
 impl std::error::Error for ParseUndigyteError {}
 
-impl std::str::FromStr for Undigyte {
-    type Err = ParseUndigyteError;
+fn parse_undigyte(s: &str) -> Result<Undigyte, ParseUndigyteError> {
+    let s = s.trim();
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let s = s.trim();
-
-        if let Some(digits) = s.strip_prefix("0u").or_else(|| s.strip_prefix("0U")) {
-            let mut chars = digits.chars();
-            let (Some(hi), Some(lo), None) = (chars.next(), chars.next(), chars.next()) else {
-                return Err(ParseUndigyteError(format!(
-                    "'{s}' must have exactly 2 undigits after 0u"
-                )));
-            };
-            let parse_undigit = |c: char| match c {
-                '0'..='9' => Ok(c as u8 - b'0'),
-                'X' | 'x' => Ok(10),
-                _ => Err(ParseUndigyteError(format!(
-                    "invalid undigit '{c}' in '{s}'"
-                ))),
-            };
-            let hi = parse_undigit(hi)?;
-            let lo = parse_undigit(lo)?;
-            return Ok(Undigyte(hi * 11 + lo));
-        }
-
-        let n: u16 = s
-            .parse()
-            .map_err(|_| ParseUndigyteError(format!("'{s}' is not a valid number")))?;
-        if n > 120 {
-            return Err(ParseUndigyteError(format!("{n} out of range 0..=120")));
-        }
-        Ok(Undigyte(n as u8))
+    if let Some(digits) = s.strip_prefix("0u").or_else(|| s.strip_prefix("0U")) {
+        let mut chars = digits.chars();
+        let (Some(hi), Some(lo), None) = (chars.next(), chars.next(), chars.next()) else {
+            return Err(ParseUndigyteError(format!(
+                "'{s}' must have exactly 2 undigits after 0u"
+            )));
+        };
+        let parse_undigit = |c: char| match c {
+            '0'..='9' => Ok(c as u8 - b'0'),
+            'X' | 'x' => Ok(10),
+            _ => Err(ParseUndigyteError(format!(
+                "invalid undigit '{c}' in '{s}'"
+            ))),
+        };
+        let hi = parse_undigit(hi)?;
+        let lo = parse_undigit(lo)?;
+        return Ok(Undigyte::from_digits([hi, lo]));
     }
+
+    let n: u16 = s
+        .parse()
+        .map_err(|_| ParseUndigyteError(format!("'{s}' is not a valid number")))?;
+    if n > 120 {
+        return Err(ParseUndigyteError(format!("{n} out of range 0..=120")));
+    }
+    Ok(Undigyte::new(n))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -251,30 +151,65 @@ struct Regs {
 impl Default for Regs {
     fn default() -> Self {
         Regs {
-            ra: Undigyte(0),
-            rb: Undigyte(0),
-            rc: Undigyte(0),
-            rd: Undigyte(0),
-            re: Undigyte(0),
-            sp: Undigyte(120),
-            bp: Undigyte(0),
+            ra: Undigyte::new(0),
+            rb: Undigyte::new(0),
+            rc: Undigyte::new(0),
+            rd: Undigyte::new(0),
+            re: Undigyte::new(0),
+            sp: Undigyte::new(120),
+            bp: Undigyte::new(0),
         }
     }
 }
 
 impl std::fmt::Debug for Regs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "ra: {} ({:?})", self.ra, self.ra)?;
-        writeln!(f, "rb: {} ({:?})", self.rb, self.rb)?;
-        writeln!(f, "rc: {} ({:?})", self.rc, self.rc)?;
-        writeln!(f, "rd: {} ({:?})", self.rd, self.rd)?;
-        writeln!(f, "re: {} ({:?})", self.re, self.re)?;
-        writeln!(f, "sp: {} ({:?})", self.sp, self.sp)?;
-        write!(f, "bp: {} ({:?})", self.bp, self.bp)
+        writeln!(
+            f,
+            "ra: {} ({:?})",
+            DebugUndigyte(self.ra),
+            DebugUndigyte(self.ra)
+        )?;
+        writeln!(
+            f,
+            "rb: {} ({:?})",
+            DebugUndigyte(self.rb),
+            DebugUndigyte(self.rb)
+        )?;
+        writeln!(
+            f,
+            "rc: {} ({:?})",
+            DebugUndigyte(self.rc),
+            DebugUndigyte(self.rc)
+        )?;
+        writeln!(
+            f,
+            "rd: {} ({:?})",
+            DebugUndigyte(self.rd),
+            DebugUndigyte(self.rd)
+        )?;
+        writeln!(
+            f,
+            "re: {} ({:?})",
+            DebugUndigyte(self.re),
+            DebugUndigyte(self.re)
+        )?;
+        writeln!(
+            f,
+            "sp: {} ({:?})",
+            DebugUndigyte(self.sp),
+            DebugUndigyte(self.sp)
+        )?;
+        write!(
+            f,
+            "bp: {} ({:?})",
+            DebugUndigyte(self.bp),
+            DebugUndigyte(self.bp)
+        )
     }
 }
 
-impl Index<Reg> for Regs {
+impl std::ops::Index<Reg> for Regs {
     type Output = Undigyte;
     fn index(&self, r: Reg) -> &Self::Output {
         match r {
@@ -289,7 +224,7 @@ impl Index<Reg> for Regs {
     }
 }
 
-impl IndexMut<Reg> for Regs {
+impl std::ops::IndexMut<Reg> for Regs {
     fn index_mut(&mut self, r: Reg) -> &mut Self::Output {
         match r {
             Reg::RA => &mut self.ra,
@@ -350,209 +285,210 @@ impl Inst {
         };
 
         let op = next();
-        match op.0 {
+        match op.get() {
             0 => Ok(Inst::NOP),
             1 => Ok(Inst::HLT),
             2 => {
-                let regs = next();
-                let dst = Reg::decode(regs.0 / 11)?;
-                let src = Reg::decode(regs.0 % 11)?;
+                let regs = next().get();
+                let dst = Reg::decode((regs / 11) as u8)?;
+                let src = Reg::decode((regs % 11) as u8)?;
                 Ok(Inst::MOV { dst, src })
             }
             3 => {
-                let dst = Reg::decode(next().0 % 11)?;
+                let dst = Reg::decode((next().get() % 11) as u8)?;
                 let src = next();
                 Ok(Inst::IMOV { dst, src })
             }
             4 => {
-                let regs = next();
-                let dst = Reg::decode(regs.0 / 11)?;
-                let src = Reg::decode(regs.0 % 11)?;
+                let regs = next().get();
+                let dst = Reg::decode((regs / 11) as u8)?;
+                let src = Reg::decode((regs % 11) as u8)?;
                 Ok(Inst::ADD { dst, src })
             }
             5 => {
-                let regs = next();
-                let dst = Reg::decode(regs.0 / 11)?;
-                let src = Reg::decode(regs.0 % 11)?;
+                let regs = next().get();
+                let dst = Reg::decode((regs / 11) as u8)?;
+                let src = Reg::decode((regs % 11) as u8)?;
                 Ok(Inst::SUB { dst, src })
             }
             6 => {
-                let regs = next();
-                let dst = Reg::decode(regs.0 / 11)?;
-                let src = Reg::decode(regs.0 % 11)?;
+                let regs = next().get();
+                let dst = Reg::decode((regs / 11) as u8)?;
+                let src = Reg::decode((regs % 11) as u8)?;
                 Ok(Inst::MUL { dst, src })
             }
             7 => {
-                let regs = next();
-                let dst = Reg::decode(regs.0 / 11)?;
-                let src = Reg::decode(regs.0 % 11)?;
+                let regs = next().get();
+                let dst = Reg::decode((regs / 11) as u8)?;
+                let src = Reg::decode((regs % 11) as u8)?;
                 Ok(Inst::DIV { dst, src })
             }
             8 => {
-                let regs = next();
-                let dst = Reg::decode(regs.0 / 11)?;
-                let src = Reg::decode(regs.0 % 11)?;
+                let regs = next().get();
+                let dst = Reg::decode((regs / 11) as u8)?;
+                let src = Reg::decode((regs % 11) as u8)?;
                 Ok(Inst::MOD { dst, src })
             }
             9 => {
-                let dst = Reg::decode(next().0 % 11)?;
+                let dst = Reg::decode((next().get() % 11) as u8)?;
                 let src = next();
                 Ok(Inst::IADD { dst, src })
             }
             10 => {
-                let dst = Reg::decode(next().0 % 11)?;
+                let dst = Reg::decode((next().get() % 11) as u8)?;
                 let src = next();
                 Ok(Inst::ISUB { dst, src })
             }
             11 => {
-                let dst = Reg::decode(next().0 % 11)?;
+                let dst = Reg::decode((next().get() % 11) as u8)?;
                 let src = next();
                 Ok(Inst::IMUL { dst, src })
             }
             12 => {
-                let dst = Reg::decode(next().0 % 11)?;
+                let dst = Reg::decode((next().get() % 11) as u8)?;
                 let src = next();
                 Ok(Inst::IDIV { dst, src })
             }
             13 => {
-                let dst = Reg::decode(next().0 % 11)?;
+                let dst = Reg::decode((next().get() % 11) as u8)?;
                 let src = next();
                 Ok(Inst::IMOD { dst, src })
             }
             15 => Ok(Inst::JMP { abs: next() }),
             16 => {
-                let dst = Reg::decode(next().0 % 11)?;
+                let dst = Reg::decode((next().get() % 11) as u8)?;
                 let abs = next();
                 Ok(Inst::LDR { dst, abs })
             }
             17 => {
-                let regs = next();
-                let dst = Reg::decode(regs.0 / 11)?;
-                let reg = Reg::decode(regs.0 % 11)?;
+                let regs = next().get();
+                let dst = Reg::decode((regs / 11) as u8)?;
+                let reg = Reg::decode((regs % 11) as u8)?;
                 Ok(Inst::LDRREG { dst, reg })
             }
             18 => {
                 let abs = next();
-                let src = Reg::decode(next().0 % 11)?;
+                let src = Reg::decode((next().get() % 11) as u8)?;
                 Ok(Inst::STR { abs, src })
             }
             19 => {
-                let regs = next();
-                let reg = Reg::decode(regs.0 / 11)?;
-                let src = Reg::decode(regs.0 % 11)?;
+                let regs = next().get();
+                let reg = Reg::decode((regs / 11) as u8)?;
+                let src = Reg::decode((regs % 11) as u8)?;
                 Ok(Inst::STRREG { reg, src })
             }
             20 => Ok(Inst::PUSH {
-                src: Reg::decode(next().0 % 11)?,
+                src: Reg::decode((next().get() % 11) as u8)?,
             }),
             21 => Ok(Inst::POP {
-                dst: Reg::decode(next().0 % 11)?,
+                dst: Reg::decode((next().get() % 11) as u8)?,
             }),
             22 => Ok(Inst::CALL { abs: next() }),
             23 => Ok(Inst::RET),
             24 => Ok(Inst::JIZ {
-                reg: Reg::decode(next().0 % 11)?,
+                reg: Reg::decode((next().get() % 11) as u8)?,
                 then: next(),
             }),
             25 => Ok(Inst::JNZ {
-                reg: Reg::decode(next().0 % 11)?,
+                reg: Reg::decode((next().get() % 11) as u8)?,
                 then: next(),
             }),
             26 => {
-                let regs = next();
-                let a = Reg::decode(regs.0 / 11)?;
-                let b = Reg::decode(regs.0 % 11)?;
+                let regs = next().get();
+                let a = Reg::decode((regs / 11) as u8)?;
+                let b = Reg::decode((regs % 11) as u8)?;
                 Ok(Inst::JEQ { a, b, then: next() })
             }
             27 => {
-                let regs = next();
-                let a = Reg::decode(regs.0 / 11)?;
-                let b = Reg::decode(regs.0 % 11)?;
+                let regs = next().get();
+                let a = Reg::decode((regs / 11) as u8)?;
+                let b = Reg::decode((regs % 11) as u8)?;
                 Ok(Inst::JNE { a, b, then: next() })
             }
             28 => {
-                let regs = next();
-                let a = Reg::decode(regs.0 / 11)?;
-                let b = Reg::decode(regs.0 % 11)?;
+                let regs = next().get();
+                let a = Reg::decode((regs / 11) as u8)?;
+                let b = Reg::decode((regs % 11) as u8)?;
                 Ok(Inst::JLT { a, b, then: next() })
             }
             29 => {
-                let regs = next();
-                let a = Reg::decode(regs.0 / 11)?;
-                let b = Reg::decode(regs.0 % 11)?;
+                let regs = next().get();
+                let a = Reg::decode((regs / 11) as u8)?;
+                let b = Reg::decode((regs % 11) as u8)?;
                 Ok(Inst::JGT { a, b, then: next() })
             }
             30 => {
-                let regs = next();
-                let a = Reg::decode(regs.0 / 11)?;
-                let b = Reg::decode(regs.0 % 11)?;
+                let regs = next().get();
+                let a = Reg::decode((regs / 11) as u8)?;
+                let b = Reg::decode((regs % 11) as u8)?;
                 Ok(Inst::JLTI { a, b, then: next() })
             }
             31 => {
-                let regs = next();
-                let a = Reg::decode(regs.0 / 11)?;
-                let b = Reg::decode(regs.0 % 11)?;
+                let regs = next().get();
+                let a = Reg::decode((regs / 11) as u8)?;
+                let b = Reg::decode((regs % 11) as u8)?;
                 Ok(Inst::JGTI { a, b, then: next() })
             }
             32 => Ok(Inst::OUTU {
-                reg: Reg::decode(next().0 % 11)?,
+                reg: Reg::decode((next().get() % 11) as u8)?,
             }),
             33 => Ok(Inst::OUTD {
-                reg: Reg::decode(next().0 % 11)?,
+                reg: Reg::decode((next().get() % 11) as u8)?,
             }),
             34 => {
-                let regs = next();
-                let ptr = Reg::decode(regs.0 / 11)?;
-                let len = Reg::decode(regs.0 % 11)?;
+                let regs = next().get();
+                let ptr = Reg::decode((regs / 11) as u8)?;
+                let len = Reg::decode((regs % 11) as u8)?;
                 Ok(Inst::OUTS { ptr, len })
             }
             35 => Ok(Inst::IOUTS {
-                ptr: Reg::decode(next().0 % 11)?,
+                ptr: Reg::decode((next().get() % 11) as u8)?,
                 len: next(),
             }),
-            _ => Err(format!("Invalid opcode number: {op:?}")),
+            _ => Err(format!("Invalid opcode number: {:?}", DebugUndigyte(op))),
         }
     }
 }
 
 impl std::fmt::Debug for Inst {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let u = |x: Undigyte| DebugUndigyte(x);
         match self {
             Inst::NOP => write!(f, "nop"),
             Inst::HLT => write!(f, "hlt"),
             Inst::MOV { dst, src } => write!(f, "mov {dst:?}, {src:?}"),
-            Inst::IMOV { dst, src } => write!(f, "mov {dst:?}, {src} ({src:?})"),
+            Inst::IMOV { dst, src } => write!(f, "mov {dst:?}, {} ({:?})", u(*src), u(*src)),
             Inst::ADD { dst, src } => write!(f, "add {dst:?}, {src:?}"),
             Inst::SUB { dst, src } => write!(f, "sub {dst:?}, {src:?}"),
             Inst::MUL { dst, src } => write!(f, "mul {dst:?}, {src:?}"),
             Inst::DIV { dst, src } => write!(f, "div {dst:?}, {src:?}"),
             Inst::MOD { dst, src } => write!(f, "mod {dst:?}, {src:?}"),
-            Inst::IADD { dst, src } => write!(f, "add {dst:?}, {src} ({src:?})"),
-            Inst::ISUB { dst, src } => write!(f, "sub {dst:?}, {src} ({src:?})"),
-            Inst::IMUL { dst, src } => write!(f, "mul {dst:?}, {src} ({src:?})"),
-            Inst::IDIV { dst, src } => write!(f, "div {dst:?}, {src} ({src:?})"),
-            Inst::IMOD { dst, src } => write!(f, "mod {dst:?}, {src} ({src:?})"),
-            Inst::JMP { abs } => write!(f, "jmp {abs:?}"),
-            Inst::LDR { dst, abs } => write!(f, "ldr {dst:?}, {abs:?}"),
+            Inst::IADD { dst, src } => write!(f, "add {dst:?}, {} ({:?})", u(*src), u(*src)),
+            Inst::ISUB { dst, src } => write!(f, "sub {dst:?}, {} ({:?})", u(*src), u(*src)),
+            Inst::IMUL { dst, src } => write!(f, "mul {dst:?}, {} ({:?})", u(*src), u(*src)),
+            Inst::IDIV { dst, src } => write!(f, "div {dst:?}, {} ({:?})", u(*src), u(*src)),
+            Inst::IMOD { dst, src } => write!(f, "mod {dst:?}, {} ({:?})", u(*src), u(*src)),
+            Inst::JMP { abs } => write!(f, "jmp {:?}", u(*abs)),
+            Inst::LDR { dst, abs } => write!(f, "ldr {dst:?}, {:?}", u(*abs)),
             Inst::LDRREG { dst, reg } => write!(f, "ldr {dst:?}, {reg:?}"),
-            Inst::STR { abs, src } => write!(f, "str {abs:?}, {src:?}"),
+            Inst::STR { abs, src } => write!(f, "str {:?}, {src:?}", u(*abs)),
             Inst::STRREG { reg, src } => write!(f, "str {reg:?}, {src:?}"),
             Inst::PUSH { src } => write!(f, "push {src:?}"),
             Inst::POP { dst } => write!(f, "push {dst:?}"),
-            Inst::CALL { abs } => write!(f, "call {abs:?}"),
+            Inst::CALL { abs } => write!(f, "call {:?}", u(*abs)),
             Inst::RET => write!(f, "ret"),
-            Inst::JIZ { reg, then } => write!(f, "jiz {reg:?}, {then:?}"),
-            Inst::JNZ { reg, then } => write!(f, "jnz {reg:?}, {then:?}"),
-            Inst::JEQ { a, b, then } => write!(f, "jeq {a:?}, {b:?}, {then:?}"),
-            Inst::JNE { a, b, then } => write!(f, "jne {a:?}, {b:?}, {then:?}"),
-            Inst::JLT { a, b, then } => write!(f, "jlt {a:?}, {b:?}, {then:?}"),
-            Inst::JGT { a, b, then } => write!(f, "jgt {a:?}, {b:?}, {then:?}"),
-            Inst::JLTI { a, b, then } => write!(f, "jlti {a:?}, {b:?}, {then:?}"),
-            Inst::JGTI { a, b, then } => write!(f, "jgti {a:?}, {b:?}, {then:?}"),
+            Inst::JIZ { reg, then } => write!(f, "jiz {reg:?}, {:?}", u(*then)),
+            Inst::JNZ { reg, then } => write!(f, "jnz {reg:?}, {:?}", u(*then)),
+            Inst::JEQ { a, b, then } => write!(f, "jeq {a:?}, {b:?}, {:?}", u(*then)),
+            Inst::JNE { a, b, then } => write!(f, "jne {a:?}, {b:?}, {:?}", u(*then)),
+            Inst::JLT { a, b, then } => write!(f, "jlt {a:?}, {b:?}, {:?}", u(*then)),
+            Inst::JGT { a, b, then } => write!(f, "jgt {a:?}, {b:?}, {:?}", u(*then)),
+            Inst::JLTI { a, b, then } => write!(f, "jlti {a:?}, {b:?}, {:?}", u(*then)),
+            Inst::JGTI { a, b, then } => write!(f, "jgti {a:?}, {b:?}, {:?}", u(*then)),
             Inst::OUTU { reg } => write!(f, "outu {reg:?}"),
             Inst::OUTD { reg } => write!(f, "outd {reg:?}"),
             Inst::OUTS { ptr, len } => write!(f, "outs {ptr:?}, {len:?}"),
-            Inst::IOUTS { ptr, len } => write!(f, "outs {ptr:?}, {len} ({len:?})"),
+            Inst::IOUTS { ptr, len } => write!(f, "outs {ptr:?}, {} ({:?})", u(*len), u(*len)),
         }
     }
 }
@@ -562,9 +498,7 @@ fn parse_program(source: &str) -> Result<Vec<Undigyte>, String> {
     for (line_no, raw_line) in source.lines().enumerate() {
         let line = raw_line.split(';').next().unwrap_or("").trim();
         for tok in line.split_whitespace() {
-            let n: Undigyte = tok
-                .parse()
-                .map_err(|_| format!("line {}: invalid byte '{tok}'", line_no + 1))?;
+            let n = parse_undigyte(tok).map_err(|e| format!("line {}: {e}", line_no + 1))?;
             mem.push(n);
         }
     }
@@ -577,172 +511,159 @@ fn parse_program(source: &str) -> Result<Vec<Undigyte>, String> {
     Ok(mem)
 }
 
-fn run(mem: &mut [Undigyte], debug: bool) {
-    let mut regs = Regs::default();
-    let mut ip = 0;
-    let mut halted = false;
-    while !halted {
-        let old_ip = ip;
-        let inst = match Inst::decode(mem, &mut ip) {
-            Ok(o) => o,
-            Err(e) => {
-                eprintln!("IP {:?}: {e}", Undigyte(old_ip as u8));
-                std::process::exit(1);
-            }
-        };
-        if debug {
-            println!("IP {:?}: {inst:?}", Undigyte(old_ip as u8));
-        }
+struct N2M121b11 {
+    mem: Vec<Undigyte>,
+    regs: Regs,
+}
+
+impl N2M121b11 {
+    fn fail(&self, ip: usize, msg: &str) -> ! {
+        eprintln!("IP {}: {msg}", self.format_ip(ip));
+        std::process::exit(1);
+    }
+}
+
+impl Machine for N2M121b11 {
+    type Inst = Inst;
+
+    fn decode(&self, ip: &mut usize) -> Result<Self::Inst, String> {
+        Inst::decode(&self.mem, ip)
+    }
+
+    fn execute(&mut self, inst: Self::Inst, ip: &mut usize) -> bool {
+        let old_ip = *ip;
+        let regs = &mut self.regs;
+        let mem = &mut self.mem;
         match inst {
             Inst::NOP => {}
-            Inst::HLT => halted = true,
+            Inst::HLT => return true,
             Inst::MOV { dst, src } => regs[dst] = regs[src],
             Inst::IMOV { dst, src } => regs[dst] = src,
-            Inst::ADD { dst, src } => regs[dst] = regs[dst] + regs[src],
-            Inst::SUB { dst, src } => regs[dst] = regs[dst] - regs[src],
-            Inst::MUL { dst, src } => regs[dst] = regs[dst] * regs[src],
+            Inst::ADD { dst, src } => regs[dst] = regs[dst].wrapping_add(regs[src]),
+            Inst::SUB { dst, src } => regs[dst] = regs[dst].wrapping_sub(regs[src]),
+            Inst::MUL { dst, src } => regs[dst] = regs[dst].wrapping_mul(regs[src]),
             Inst::DIV { dst, src } => {
                 regs[dst] = match regs[dst].checked_div(regs[src]) {
                     Some(v) => v,
-                    None => {
-                        eprintln!("IP {:?}: Division by zero", Undigyte(old_ip as u8));
-                        std::process::exit(1);
-                    }
+                    None => self.fail(old_ip, "Division by zero"),
                 }
             }
             Inst::MOD { dst, src } => {
                 regs[dst] = match regs[dst].checked_mod(regs[src]) {
                     Some(v) => v,
-                    None => {
-                        eprintln!("IP {:?}: Division by zero", Undigyte(old_ip as u8));
-                        std::process::exit(1);
-                    }
+                    None => self.fail(old_ip, "Division by zero"),
                 }
             }
-            Inst::IADD { dst, src } => regs[dst] = regs[dst] + src,
-            Inst::ISUB { dst, src } => regs[dst] = regs[dst] - src,
-            Inst::IMUL { dst, src } => regs[dst] = regs[dst] * src,
+            Inst::IADD { dst, src } => regs[dst] = regs[dst].wrapping_add(src),
+            Inst::ISUB { dst, src } => regs[dst] = regs[dst].wrapping_sub(src),
+            Inst::IMUL { dst, src } => regs[dst] = regs[dst].wrapping_mul(src),
             Inst::IDIV { dst, src } => {
                 regs[dst] = match regs[dst].checked_div(src) {
                     Some(v) => v,
-                    None => {
-                        eprintln!("IP {:?}: Division by zero", Undigyte(old_ip as u8));
-                        std::process::exit(1);
-                    }
+                    None => self.fail(old_ip, "Division by zero"),
                 }
             }
             Inst::IMOD { dst, src } => {
                 regs[dst] = match regs[dst].checked_mod(src) {
                     Some(v) => v,
-                    None => {
-                        eprintln!("IP {:?}: Division by zero", Undigyte(old_ip as u8));
-                        std::process::exit(1);
-                    }
+                    None => self.fail(old_ip, "Division by zero"),
                 }
             }
-            Inst::JMP { abs } => ip = abs.0 as usize,
-            Inst::LDR { dst, abs } => regs[dst] = mem[abs.0 as usize],
-            Inst::LDRREG { dst, reg } => regs[dst] = mem[regs[reg].0 as usize],
-            Inst::STR { abs, src } => mem[abs.0 as usize] = regs[src],
-            Inst::STRREG { reg, src } => mem[regs[reg].0 as usize] = regs[src],
+            Inst::JMP { abs } => *ip = abs.get() as usize,
+            Inst::LDR { dst, abs } => regs[dst] = mem[abs.get() as usize],
+            Inst::LDRREG { dst, reg } => regs[dst] = mem[regs[reg].get() as usize],
+            Inst::STR { abs, src } => mem[abs.get() as usize] = regs[src],
+            Inst::STRREG { reg, src } => mem[regs[reg].get() as usize] = regs[src],
             Inst::PUSH { src } => {
-                regs.sp = regs.sp - Undigyte(1);
-                mem[regs.sp.0 as usize] = regs[src];
+                regs.sp = regs.sp.wrapping_sub(Undigyte::new(1));
+                mem[regs.sp.get() as usize] = regs[src];
             }
             Inst::POP { dst } => {
-                if regs.sp.0 == 120 {
-                    eprintln!("IP {:?}: Stack underflow", Undigyte(old_ip as u8));
-                    std::process::exit(1);
+                if regs.sp.get() == 120 {
+                    self.fail(old_ip, "Stack underflow");
                 }
-                regs[dst] = mem[regs.sp.0 as usize];
-                regs.sp = regs.sp + Undigyte(1);
+                regs[dst] = mem[regs.sp.get() as usize];
+                regs.sp = regs.sp.wrapping_add(Undigyte::new(1));
             }
             Inst::CALL { abs } => {
-                regs.sp = regs.sp - Undigyte(1);
-                mem[regs.sp.0 as usize].0 = ip as u8;
-                ip = abs.0 as usize;
+                regs.sp = regs.sp.wrapping_sub(Undigyte::new(1));
+                mem[regs.sp.get() as usize] = Undigyte::new(*ip as u16);
+                *ip = abs.get() as usize;
             }
             Inst::RET => {
-                if regs.sp.0 == 120 {
-                    eprintln!("IP {:?}: Stack underflow", Undigyte(old_ip as u8));
-                    std::process::exit(1);
+                if regs.sp.get() == 120 {
+                    self.fail(old_ip, "Stack underflow");
                 }
-                ip = mem[regs.sp.0 as usize].0 as usize;
-                regs.sp = regs.sp + Undigyte(1);
+                *ip = mem[regs.sp.get() as usize].get() as usize;
+                regs.sp = regs.sp.wrapping_add(Undigyte::new(1));
             }
             Inst::JIZ { reg, then } => {
-                if regs[reg].0 == 0 {
-                    ip = then.0 as usize;
+                if regs[reg].get() == 0 {
+                    *ip = then.get() as usize;
                 }
             }
             Inst::JNZ { reg, then } => {
-                if regs[reg].0 != 0 {
-                    ip = then.0 as usize;
+                if regs[reg].get() != 0 {
+                    *ip = then.get() as usize;
                 }
             }
             Inst::JEQ { a, b, then } => {
                 if regs[a] == regs[b] {
-                    ip = then.0 as usize;
+                    *ip = then.get() as usize;
                 }
             }
             Inst::JNE { a, b, then } => {
                 if regs[a] != regs[b] {
-                    ip = then.0 as usize;
+                    *ip = then.get() as usize;
                 }
             }
             Inst::JLT { a, b, then } => {
                 if regs[a] < regs[b] {
-                    ip = then.0 as usize;
+                    *ip = then.get() as usize;
                 }
             }
             Inst::JGT { a, b, then } => {
                 if regs[a] > regs[b] {
-                    ip = then.0 as usize;
+                    *ip = then.get() as usize;
                 }
             }
             Inst::JLTI { a, b, then } => {
                 if regs[a].as_signed() < regs[b].as_signed() {
-                    ip = then.0 as usize;
+                    *ip = then.get() as usize;
                 }
             }
             Inst::JGTI { a, b, then } => {
                 if regs[a].as_signed() > regs[b].as_signed() {
-                    ip = then.0 as usize;
+                    *ip = then.get() as usize;
                 }
             }
-            Inst::OUTU { reg } => print!("{:?}", regs[reg]),
-            Inst::OUTD { reg } => print!("{}", regs[reg]),
+            Inst::OUTU { reg } => print!("{:?}", DebugUndigyte(regs[reg])),
+            Inst::OUTD { reg } => print!("{}", DebugUndigyte(regs[reg])),
             Inst::OUTS { ptr, len } => {
-                let ptr = regs[ptr].0 as usize;
-                let len = regs[len].0 as usize;
+                let ptr = regs[ptr].get() as usize;
+                let len = regs[len].get() as usize;
                 for i in 0..len {
-                    let abs = (ptr + i) % 121;
-                    print!("{}", mem[abs].as_char());
+                    print!("{}", undigyte2char(mem[(ptr + i) % 121]));
                 }
             }
             Inst::IOUTS { ptr, len } => {
-                let ptr = regs[ptr].0 as usize;
-                let len = len.0 as usize;
+                let ptr = regs[ptr].get() as usize;
+                let len = len.get() as usize;
                 for i in 0..len {
-                    let abs = (ptr + i) % 121;
-                    print!("{}", mem[abs].as_char());
+                    print!("{}", undigyte2char(mem[(ptr + i) % 121]));
                 }
             }
         }
-        if debug {
-            println!("\n{regs:?}");
-            if !halted {
-                let mut cmd = String::new();
-                std::io::stdin().read_line(&mut cmd).unwrap();
-                match cmd.to_lowercase().as_str() {
-                    "quit" | "q" | "exit" | "halt" | "h" => {
-                        println!("User requested halt");
-                        halted = true;
-                    }
-                    _ => {}
-                }
-            }
-        }
+        std::io::stdout().flush().ok();
+        false
+    }
+
+    fn debug_dump(&self, _old_ip: usize) -> String {
+        format!("{:?}", self.regs)
+    }
+
+    fn format_ip(&self, ip: usize) -> String {
+        format!("{:?}", DebugUndigyte(Undigyte::new(ip as u16)))
     }
 }
 
@@ -776,7 +697,12 @@ fn main() {
             std::process::exit(1);
         }
     };
-    mem.resize(121, Undigyte(0));
+    mem.resize(121, Undigyte::new(0));
 
-    run(&mut mem, debug);
+    let machine = N2M121b11 {
+        mem,
+        regs: Regs::default(),
+    };
+
+    machine.run(debug);
 }

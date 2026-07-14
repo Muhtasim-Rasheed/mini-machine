@@ -1,173 +1,112 @@
+use std::{collections::HashMap, sync::LazyLock};
+
 use colored::Colorize;
+use mini_machine::machine::Machine;
+use mini_machine::radbyte::RadixByte;
 use num_enum::TryFromPrimitive;
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct Pentits {
-    lo: u8,
-    mi: u8,
-    hi: u8,
-}
+type Pentyte = RadixByte<5, 3>;
 
-/// [0, 125)
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct Pentyte(u8);
+const PENTYTE_TABLE: [[[char; 5]; 5]; 5] = [
+    [
+        ['\0', '\x01', '\x02', '\x03', '\x04'],
+        ['\x05', '\x06', '\x07', '\x09', '\x0b'],
+        ['\x0c', '\x0E', '\x0F', '\x10', '\x11'],
+        ['\x08', '\x12', '\x13', '\x14', '\x15'],
+        ['\n', '\r', '\x16', '\x17', '\x18'],
+    ],
+    [
+        ['a', 'b', 'c', 'd', 'e'],
+        ['f', 'g', 'h', 'i', 'j'],
+        ['k', 'l', 'm', 'n', 'o'],
+        ['p', 'q', 'r', 's', 't'],
+        ['u', 'v', 'w', 'x', 'y'],
+    ],
+    [
+        ['z', ' ', '~', '@', '?'],
+        ['!', '"', '#', '$', '_'],
+        ['%', '&', '\'', '(', ')'],
+        ['*', '+', ',', '-', '.'],
+        [':', ';', '<', '=', '>'],
+    ],
+    [
+        ['A', 'B', 'C', 'D', 'E'],
+        ['F', 'G', 'H', 'I', 'J'],
+        ['K', 'L', 'M', 'N', 'O'],
+        ['P', 'Q', 'R', 'S', 'T'],
+        ['U', 'V', 'W', 'X', 'Y'],
+    ],
+    [
+        ['Z', '\x19', '\x1a', '\x1b', '\x1c'],
+        ['[', '\\', '/', ']', '^'],
+        ['0', '1', '2', '3', '4'],
+        ['5', '6', '7', '8', '9'],
+        ['`', '{', '|', '}', '\x7f'],
+    ],
+];
 
-impl Pentyte {
-    const MIN: Self = Pentyte(0);
-    const MAX: Self = Pentyte(124);
-
-    const fn from_pentits(pentits: Pentits) -> Self {
-        Pentyte((pentits.hi * 5 + pentits.mi) * 5 + pentits.lo)
-    }
-
-    fn inc(&mut self) {
-        self.0 += 1;
-        if *self > Self::MAX {
-            self.0 = 0;
+static CHAR_TO_PENTYTE: LazyLock<HashMap<char, [u8; 3]>> = LazyLock::new(|| {
+    let mut map = HashMap::new();
+    for (page, rows) in PENTYTE_TABLE.iter().enumerate() {
+        for (row, cols) in rows.iter().enumerate() {
+            for (col, &c) in cols.iter().enumerate() {
+                map.insert(c, [page as u8, row as u8, col as u8]);
+            }
         }
     }
+    map
+});
 
-    fn dec(&mut self) {
-        if *self == Self::MIN {
-            self.0 = 124;
-        }
-        self.0 = self.0.wrapping_sub(1);
-    }
-
-    fn add(&mut self, rhs: Pentyte) {
-        self.0 = ((u16::from(self.0) + u16::from(rhs.0)) % 125) as u8;
-    }
-
-    fn sub(&mut self, rhs: Pentyte) {
-        self.0 = ((125 + self.0 as u16 - rhs.0 as u16) % 125) as u8;
-    }
-
-    fn mul(&mut self, rhs: Pentyte) {
-        self.0 = ((u16::from(self.0) * u16::from(rhs.0)) % 125) as u8;
-    }
-
-    fn div(&mut self, rhs: Pentyte) {
-        self.0 = ((u16::from(self.0) / u16::from(rhs.0)) % 125) as u8;
-    }
-
-    fn flp(&mut self) {
-        let Pentits { lo, mi, hi } = (*self).into();
-        *self = Pentits {
-            lo: 4 - lo,
-            mi: 4 - mi,
-            hi: 4 - hi,
-        }
-        .into();
-    }
+fn pentyte2char(p: Pentyte) -> char {
+    let [page, row, col] = p.digits();
+    PENTYTE_TABLE[page as usize][row as usize][col as usize]
 }
 
-impl From<Pentyte> for Pentits {
-    fn from(pentyte: Pentyte) -> Self {
-        let (d2, pentyte) = (pentyte.0 / 25, pentyte.0 % 25);
-        let (d1, d0) = (pentyte / 5, pentyte % 5);
-        Pentits {
-            lo: d0,
-            mi: d1,
-            hi: d2,
-        }
-    }
+fn char2pentyte(c: char) -> Option<Pentyte> {
+    CHAR_TO_PENTYTE.get(&c).map(|&d| Pentyte::from_digits(d))
 }
 
-impl From<Pentits> for Pentyte {
-    fn from(pentits: Pentits) -> Self {
-        Self::from_pentits(pentits)
-    }
+fn addr(op: Pentyte) -> usize {
+    (op.get() % 25) as usize
 }
 
-macro_rules! pentascii_table {
-    () => {
-        convert!(
-            '\0' => 000, '\x01' => 001, '\x02' => 002, '\x03' => 003, '\x04' => 004,
-            '\x05' => 010, '\x06' => 011, '\x07' => 012, '\x09' => 013, '\x0B' => 014,
-            '\x0C' => 020, '\x0E' => 021, '\x0F' => 022, '\x10' => 023, '\x11' => 024,
-            '\x08' => 030, '\x12' => 031, '\x13' => 032, '\x14' => 033, '\x15' => 034,
-            '\n' => 040, '\r' => 041, '\x16' => 042, '\x17' => 043, '\x18' => 044,
-            'a' => 100, 'b' => 101, 'c' => 102, 'd' => 103, 'e' => 104,
-            'f' => 110, 'g' => 111, 'h' => 112, 'i' => 113, 'j' => 114,
-            'k' => 120, 'l' => 121, 'm' => 122, 'n' => 123, 'o' => 124,
-            'p' => 130, 'q' => 131, 'r' => 132, 's' => 133, 't' => 134,
-            'u' => 140, 'v' => 141, 'w' => 142, 'x' => 143, 'y' => 144,
-            'z' => 200, ' ' => 201, '~' => 202, '@' => 203, '?' => 204,
-            '!' => 210, '"' => 211, '#' => 212, '$' => 213, '_' => 214,
-            '%' => 220, '&' => 221, '\'' => 222, '(' => 223, ')' => 224,
-            '*' => 230, '+' => 231, ',' => 232, '-' => 233, '.' => 234,
-            ':' => 240, ';' => 241, '<' => 242, '=' => 243, '>' => 244,
-            'A' => 300, 'B' => 301, 'C' => 302, 'D' => 303, 'E' => 304,
-            'F' => 310, 'G' => 311, 'H' => 312, 'I' => 313, 'J' => 314,
-            'K' => 320, 'L' => 321, 'M' => 322, 'N' => 323, 'O' => 324,
-            'P' => 330, 'Q' => 331, 'R' => 332, 'S' => 333, 'T' => 334,
-            'U' => 340, 'V' => 341, 'W' => 342, 'X' => 343, 'Y' => 344,
-            'Z' => 400, '\x19' => 401, '\x1A' => 402, '\x1B' => 403, '\x1C' => 404,
-            '[' => 410, '\\' => 411, '/' => 412, ']' => 413, '^' => 414,
-            '0' => 420, '1' => 421, '2' => 422, '3' => 423, '4' => 424,
-            '5' => 430, '6' => 431, '7' => 432, '8' => 433, '9' => 434,
-            '`' => 440, '{' => 441, '|' => 442, '}' => 443, '\x7F' => 444,
-        )
-    };
-}
+#[derive(PartialEq)]
+struct DebugPentyte(Pentyte);
 
-impl TryFrom<char> for Pentyte {
-    type Error = char;
-    fn try_from(c: char) -> Result<Self, Self::Error> {
-        macro_rules! convert {
-            ($($ch:literal => $d:literal),* $(,)?) => {
-                match c {
-                    $(
-                        $ch => Ok(const { Pentyte::from_pentits(Pentits { hi: ($d / 100) as u8, mi: ($d / 10 % 10) as u8, lo: ($d % 10) as u8 }) }),
-                    )*
-                    _ => Err(c),
-                }
-            };
-        }
-
-        pentascii_table!()
-    }
-}
-
-impl From<Pentyte> for char {
-    fn from(p: Pentyte) -> Self {
-        macro_rules! convert {
-            ($($ch:literal => $d:literal),* $(,)?) => {
-                match p {
-                    $(
-                        p if const { Pentyte::from_pentits(Pentits { hi: ($d / 100) as u8, mi: ($d / 10 % 10) as u8, lo: ($d % 10) as u8 }) } == p => $ch,
-                    )*
-                    p => unreachable!("somehow reached {p:?} ({p})"),
-                }
-            };
-        }
-
-        pentascii_table!()
-    }
-}
-
-impl std::fmt::Debug for Pentyte {
+impl std::fmt::Debug for DebugPentyte {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Pentits { lo, mi, hi } = (*self).into();
+        let [hi, mi, lo] = self.0.digits();
         write!(f, "0p{hi}{mi}{lo}")
     }
 }
 
-impl std::fmt::Display for Pentyte {
+impl std::fmt::Display for DebugPentyte {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.0.get())
     }
+}
+
+fn pentyte_inc(p: Pentyte) -> Pentyte {
+    p.wrapping_add(Pentyte::new(1))
+}
+
+fn pentyte_dec(p: Pentyte) -> Pentyte {
+    p.wrapping_sub(Pentyte::new(1))
+}
+
+fn pentyte_flip(p: Pentyte) -> Pentyte {
+    Pentyte::from_digits(p.digits().map(|d| 4 - d))
 }
 
 struct Glyph(Pentyte);
 
 impl std::fmt::Debug for Glyph {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let c = char::from(self.0);
+        let c = pentyte2char(self.0);
         if c.is_ascii_graphic() || c == ' ' {
             write!(f, " '{c}' ")
         } else {
-            write!(f, "{:?}", self.0)
+            write!(f, "{:?}", DebugPentyte(self.0))
         }
     }
 }
@@ -233,19 +172,21 @@ impl Instruction {
             p
         };
 
-        let raw = next().0;
-        let opcode = Opcode::try_from_primitive(raw % 25).map_err(|_| {
-            if char::from(Pentyte(raw)) == '\n' {
+        let raw = next().get();
+        let opcode = Opcode::try_from_primitive((raw % 25) as u8).map_err(|_| {
+            let raw_p = Pentyte::new(raw);
+            let masked_p = Pentyte::new(raw % 25);
+            if pentyte2char(raw_p) == '\n' {
                 format!(
                     "Expected a valid opcode but got {:?} ({:?})\nNote: your editor may have ended the file with a newline and your program is actually 24 characters.\nNote: in this case, just place a DON at the end.",
-                    Pentyte(raw),
-                    Pentyte(raw % 25)
+                    DebugPentyte(raw_p),
+                    DebugPentyte(masked_p)
                 )
             } else {
                 format!(
                     "Expected a valid opcode but got {:?} ({:?})",
-                    Pentyte(raw),
-                    Pentyte(raw % 25)
+                    DebugPentyte(raw_p),
+                    DebugPentyte(masked_p)
                 )
             }
         })?;
@@ -255,6 +196,132 @@ impl Instruction {
             operand2: opcode.takes_operand2().then(&mut next),
             operand3: opcode.takes_operand3().then(&mut next),
         })
+    }
+}
+
+impl std::fmt::Debug for Instruction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.opcode)?;
+        for operand in [self.operand, self.operand2, self.operand3]
+            .into_iter()
+            .flatten()
+        {
+            write!(
+                f,
+                " {:?}(#{:?})",
+                DebugPentyte(operand),
+                DebugPentyte(Pentyte::new(operand.get() % 25))
+            )?;
+        }
+        Ok(())
+    }
+}
+
+struct N3M25b5 {
+    mem: Vec<Pentyte>,
+}
+
+impl N3M25b5 {
+    fn format_mem(&self, highlight: Option<usize>) -> String {
+        let mut out = String::new();
+        for (i, p) in self.mem.iter().enumerate() {
+            if i % 5 == 0 {
+                out.push('\n');
+                out.push_str(&format!("0{}x: ", i / 5));
+            }
+            let cell = format!("{:?}", Glyph(*p));
+            if Some(i) == highlight {
+                out.push_str(&format!("{} ", cell.black().on_white()));
+            } else {
+                out.push_str(&format!("{cell} "));
+            }
+        }
+        out
+    }
+}
+
+impl Machine for N3M25b5 {
+    type Inst = Instruction;
+
+    fn decode(&self, ip: &mut usize) -> Result<Self::Inst, String> {
+        Instruction::decode(&self.mem, ip)
+    }
+
+    fn execute(&mut self, inst: Self::Inst, ip: &mut usize) -> bool {
+        match inst.opcode {
+            Opcode::DON => {}
+            Opcode::PRT => print!("{}", pentyte2char(self.mem[addr(inst.operand.unwrap())])),
+            Opcode::INC => {
+                let a = addr(inst.operand.unwrap());
+                self.mem[a] = pentyte_inc(self.mem[a]);
+            }
+            Opcode::DEC => {
+                let a = addr(inst.operand.unwrap());
+                self.mem[a] = pentyte_dec(self.mem[a]);
+            }
+            Opcode::FLP => {
+                let a = addr(inst.operand.unwrap());
+                self.mem[a] = pentyte_flip(self.mem[a]);
+            }
+            Opcode::JMP => *ip = addr(inst.operand.unwrap()),
+            Opcode::JIZ => {
+                if self.mem[addr(inst.operand2.unwrap())] == Pentyte::new(0) {
+                    *ip = addr(inst.operand.unwrap());
+                }
+            }
+            Opcode::JNZ => {
+                if self.mem[addr(inst.operand2.unwrap())] != Pentyte::new(0) {
+                    *ip = addr(inst.operand.unwrap());
+                }
+            }
+            Opcode::ADD => {
+                let a = addr(inst.operand.unwrap());
+                self.mem[a] = self.mem[a].wrapping_add(inst.operand2.unwrap());
+            }
+            Opcode::SUB => {
+                let a = addr(inst.operand.unwrap());
+                self.mem[a] = self.mem[a].wrapping_sub(inst.operand2.unwrap());
+            }
+            Opcode::MUL => {
+                let a = addr(inst.operand.unwrap());
+                self.mem[a] = self.mem[a].wrapping_mul(inst.operand2.unwrap());
+            }
+            Opcode::DIV => {
+                let a = addr(inst.operand.unwrap());
+                self.mem[a] = match self.mem[a].checked_div(inst.operand2.unwrap()) {
+                    Some(v) => v,
+                    None => {
+                        eprintln!("IP {}: Division by zero", self.format_ip(*ip));
+                        std::process::exit(1);
+                    }
+                };
+            }
+            Opcode::JLT => {
+                if self.mem[addr(inst.operand2.unwrap())] < inst.operand3.unwrap() {
+                    *ip = addr(inst.operand.unwrap());
+                }
+            }
+            Opcode::JGT => {
+                if self.mem[addr(inst.operand2.unwrap())] > inst.operand3.unwrap() {
+                    *ip = addr(inst.operand.unwrap());
+                }
+            }
+            Opcode::JEQ => {
+                if self.mem[addr(inst.operand2.unwrap())] == inst.operand3.unwrap() {
+                    *ip = addr(inst.operand.unwrap());
+                }
+            }
+            Opcode::END => return true,
+        }
+        false
+    }
+
+    fn debug_dump(&self, old_ip: usize) -> String {
+        self.format_mem(Some(old_ip))
+    }
+
+    fn format_ip(&self, ip: usize) -> String {
+        format!("{:?}", DebugPentyte(Pentyte::new(ip as u16)))
     }
 }
 
@@ -272,11 +339,11 @@ fn main() {
         std::process::exit(1);
     }
     let dbg = args.next().map_or(false, |s| s == "--debug");
-    let mut mem = match std::fs::read_to_string(path)
+    let mem = match std::fs::read_to_string(path)
         .unwrap()
         .chars()
         .take(25)
-        .map(|c| Pentyte::try_from(c))
+        .map(|c| char2pentyte(c).ok_or(c))
         .collect::<Result<Vec<_>, _>>()
     {
         Ok(v) => v,
@@ -289,134 +356,13 @@ fn main() {
         eprintln!("Expected 25 pentytes, got {}", mem.len());
         std::process::exit(1);
     }
+
+    let machine = N3M25b5 { mem };
+
     if dbg {
-        for (i, p) in mem.iter().enumerate() {
-            if i % 5 == 0 {
-                println!();
-                print!("0{}x: ", i / 5);
-            }
-            print!("{:?} ", Glyph(*p));
-        }
-        println!();
+        println!("{}", machine.format_mem(None));
         println!();
     }
-    let mut ip = 0;
-    let mut halt = false;
-    let mut dbg_input = String::new();
-    while !halt {
-        let old_ip = ip;
-        if dbg {
-            print!("[Executing] IP {:?}: ", Pentyte(ip as u8));
-        }
-        let inst = match Instruction::decode(&mem, &mut ip) {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("Illegal instruction: {e}");
-                std::process::exit(1);
-            }
-        };
-        if dbg {
-            if let (Some(operand), Some(operand2), Some(operand3)) =
-                (inst.operand, inst.operand2, inst.operand3)
-            {
-                println!(
-                    "{:?} {operand:?}(#{:?}) {operand2:?}(#{:?}) {operand3:?}(#{:?})",
-                    inst.opcode,
-                    Pentyte(operand.0 % 25),
-                    Pentyte(operand2.0 % 25),
-                    Pentyte(operand3.0 % 25),
-                );
-            } else if let (Some(operand), Some(operand2)) = (inst.operand, inst.operand2) {
-                println!(
-                    "{:?} {operand:?}(#{:?}) {operand2:?}(#{:?})",
-                    inst.opcode,
-                    Pentyte(operand.0 % 25),
-                    Pentyte(operand2.0 % 25),
-                );
-            } else if let Some(operand) = inst.operand {
-                println!(
-                    "{:?} {operand:?}(#{:?})",
-                    inst.opcode,
-                    Pentyte(operand.0 % 25)
-                );
-            } else {
-                println!("{:?}", inst.opcode);
-            }
-        }
-        match inst.opcode {
-            Opcode::DON => {}
-            Opcode::PRT => print!("{}", char::from(mem[inst.operand.unwrap().0 as usize % 25])),
-            Opcode::INC => mem[inst.operand.unwrap().0 as usize % 25].inc(),
-            Opcode::DEC => mem[inst.operand.unwrap().0 as usize % 25].dec(),
-            Opcode::FLP => mem[inst.operand.unwrap().0 as usize % 25].flp(),
-            Opcode::JMP => ip = inst.operand.unwrap().0 as usize % 25,
-            Opcode::JIZ => {
-                if mem[inst.operand2.unwrap().0 as usize % 25] == Pentyte(0) {
-                    ip = inst.operand.unwrap().0 as usize % 25;
-                }
-            }
-            Opcode::JNZ => {
-                if mem[inst.operand2.unwrap().0 as usize % 25] != Pentyte(0) {
-                    ip = inst.operand.unwrap().0 as usize % 25;
-                }
-            }
-            Opcode::ADD => mem[inst.operand.unwrap().0 as usize % 25].add(inst.operand2.unwrap()),
-            Opcode::SUB => mem[inst.operand.unwrap().0 as usize % 25].sub(inst.operand2.unwrap()),
-            Opcode::MUL => mem[inst.operand.unwrap().0 as usize % 25].mul(inst.operand2.unwrap()),
-            Opcode::DIV => mem[inst.operand.unwrap().0 as usize % 25].div(inst.operand2.unwrap()),
-            Opcode::JLT => {
-                let addr = inst.operand2.unwrap().0 as usize % 25;
-                if mem[addr] < inst.operand3.unwrap() {
-                    ip = inst.operand.unwrap().0 as usize % 25;
-                }
-            }
-            Opcode::JGT => {
-                let addr = inst.operand2.unwrap().0 as usize % 25;
-                if mem[addr] > inst.operand3.unwrap() {
-                    ip = inst.operand.unwrap().0 as usize % 25;
-                }
-            }
-            Opcode::JEQ => {
-                let addr = inst.operand2.unwrap().0 as usize % 25;
-                if mem[addr] == inst.operand3.unwrap() {
-                    ip = inst.operand.unwrap().0 as usize % 25;
-                }
-            }
-            Opcode::END => halt = true,
-        }
-        if dbg {
-            for (i, p) in mem.iter().enumerate() {
-                if i % 5 == 0 {
-                    println!();
-                    print!("0{}x: ", i / 5);
-                }
-                if i == old_ip {
-                    print!("{} ", format!("{:?}", Glyph(*p)).black().on_white());
-                } else {
-                    print!("{} ", format!("{:?}", Glyph(*p)));
-                }
-            }
-            println!();
-            dbg_input.clear();
-            std::io::stdin().read_line(&mut dbg_input).unwrap();
-            if dbg_input.trim().to_lowercase() == "q" {
-                break;
-            }
-        }
-    }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pentyte_conversion_test() {
-        for i in 0..125 {
-            assert_eq!(Pentyte(i), <Pentits>::from(Pentyte(i)).into());
-        }
-        for i in 0..125 {
-            assert_eq!(Ok(Pentyte(i)), Pentyte::try_from(char::from(Pentyte(i))));
-        }
-    }
+    machine.run(dbg);
 }
