@@ -1,0 +1,7 @@
+0u15 0u00 0u09 ; ldr ra, val (0u09)
+0u30 0u00      ; loop: outd ra
+0u23 0u00 0u03 ; jnz ra, loop (0u03)
+0u01           ; hlt
+
+;; Change this value to 1 for the other outcome
+0              ; val: du 0

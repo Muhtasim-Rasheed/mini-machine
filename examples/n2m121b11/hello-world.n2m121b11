@@ -1,0 +1,9 @@
+0u03 0u00 0u07 ; mov ra, msg (0u07)
+0u32 0u00 14   ; outs ra, 14
+0u01           ; hlt
+
+0u47 0u74 0u80 ; msg: du "Hello, World!\n"
+0u80 0u83 0u21
+0u10 0u60 0u83
+0u86 0u80 0u73
+0u11 0u01

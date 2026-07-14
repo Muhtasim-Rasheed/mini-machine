@@ -1,0 +1,17 @@
+0u03 0u04 0u29 ; mov re, newline (0u29)
+0u03 0u00 0    ; mov ra, 0
+0u03 0u01 1    ; mov rb, 1
+
+0u30 0u00      ; loop: outd ra
+0u32 0u04 1    ; outs re, 1
+0u02 0u20      ; mov rc, ra
+0u02 0u01      ; mov ra, rb
+0u04 0u12      ; add rb, rc
+0u26 0u12 0u23 ; jlt rb, rc, drain (0u23)  -- if rb < rc, it wrapped
+0u14 0u09      ; jmp loop (0u09 = 9)
+
+0u30 0u00      ; drain: outd ra   -- print the last still-valid term
+0u32 0u04 1    ; outs re, 1
+0u01           ; hlt
+
+0u01           ; newline: du '\n'
