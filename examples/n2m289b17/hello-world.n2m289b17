@@ -1,0 +1,9 @@
+0s11 0s00 0s07 ; mov r0, msg (0s07)
+0s55 0s00 14   ; outs ra, 14
+0s01           ; hlt
+
+0s44 0s5g 0s66 ; msg: ds "Hello, World!\n"
+0s66 0s69 0s2a
+0s1f 0s52 0s69
+0s6c 0s66 0s5f
+0s1g 0s0a

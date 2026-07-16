@@ -1,0 +1,8 @@
+0s12 0s00 0s09 ; ldr r0, val (0s09)
+               ; loop:
+0s51 0s00      ;   out10 r0
+0s31 0s00 0s03 ;   jnz r0, loop
+0s01           ; hlt
+
+;; Change this value to 1 for the other outcome
+0              ; val: ds 0

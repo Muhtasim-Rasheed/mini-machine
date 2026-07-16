@@ -72,6 +72,46 @@ impl<const BASE: u16, const DIGITS: usize> RadixByte<BASE, DIGITS> {
         Self(((Self::MODULUS - self.0 as u32) % Self::MODULUS) as u16)
     }
 
+    pub const fn dnot(self) -> Self {
+        let mut digits = self.digits();
+        let mut i = 0;
+        while i < DIGITS as usize {
+            digits[i] = (Self::MODULUS - 1 - digits[i] as u32) as u8;
+            i += 1;
+        }
+        Self::from_digits(digits)
+    }
+
+    pub const fn dmin(self, rhs: Self) -> Self {
+        let mut digits1 = self.digits();
+        let digits2 = rhs.digits();
+        let mut i = 0;
+        while i < DIGITS as usize {
+            digits1[i] = if digits1[i] < digits2[i] {
+                digits1[i]
+            } else {
+                digits2[i]
+            };
+            i += 1;
+        }
+        Self::from_digits(digits1)
+    }
+
+    pub const fn dmax(self, rhs: Self) -> Self {
+        let mut digits1 = self.digits();
+        let digits2 = rhs.digits();
+        let mut i = 0;
+        while i < DIGITS as usize {
+            digits1[i] = if digits1[i] > digits2[i] {
+                digits1[i]
+            } else {
+                digits2[i]
+            };
+            i += 1;
+        }
+        Self::from_digits(digits1)
+    }
+
     pub const fn as_signed(self) -> i16 {
         if self.0 <= Self::MAX.0 / 2 {
             self.0 as i16

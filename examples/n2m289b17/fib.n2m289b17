@@ -1,0 +1,14 @@
+0s11 0s00 0    ; mov r0, 0
+0s11 0s01 1    ; mov r1, 1
+               ; loop:
+0s51 0s00      ;   out10 r0
+0s53 0s0a      ;   outc '\n'
+0s10 0s20      ;   mov r2, r0
+0s10 0s01      ;   mov r0, r1
+0s20 0s12      ;   add r1, r2
+0s34 0s12 0s14 ;   jlt r1, r2, drain (0s14)  ; if rb < rc, it wrapped
+0s40 0s06      ;   jmp loop (0s06)
+               ; drain:
+0s51 0s00      ;   out10 r0             ; print the last still-valid term
+0s53 0s0a      ;   outc '\n'
+0s01           ;   hlt
